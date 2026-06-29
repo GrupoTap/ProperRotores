@@ -436,9 +436,8 @@ var PONTOS = {
 var valores={}, pontoAtivo=null;
 
 // ===== GAS CONFIG =====
-var GAS_URL = (window.PROPER_SESSION && window.PROPER_SESSION.gas_url)
-  || localStorage.getItem('GAS_URL')
-  || '';
+var _DEFAULT_ROTORES_GAS_URL = 'https://script.google.com/macros/s/AKfycbz_qSb4Ib6VoZs4TE15EYp9qO5sSEhrjadY71yK0Sd4vqnu4msidsObXnQtkCGXpIqq/exec';
+var GAS_URL = localStorage.getItem('GAS_URL') || _DEFAULT_ROTORES_GAS_URL;
 var GS_KEY  = localStorage.getItem('ficha_gs_key')  || '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92';
 var _currentMachineId = '';
 var _currentMachineName = '';
@@ -1012,7 +1011,6 @@ function syncToGS(action, payload){
     var body = Object.assign({ action: action, key: GS_KEY }, payload || {});
     fetch(GAS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: gcBody(body)
     })
     .then(function(r){ return r.json(); })
