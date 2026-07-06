@@ -1,3 +1,16 @@
+<!--
+proper_ficha_rotores_v13.html — 05/07/2026 — Sprint FormsPipeline (FIX 1)
+v13 — Rotores agora honra os_id/tarefa_id vindos do PCF, fechando o elo com
+      autoCompletarTarefa (GAS) para a tarefa auto:rotores do pipeline.
+  - Novas vars de módulo _osId/_tarefaId (perto de _coletaId, ~L447).
+  - initFromURL lê os_id/tarefa_id da query string (~L1039), sem alterar a
+    leitura já existente de machine_id/client/brand/model/visit_id/tech.
+  - payload de salvarColeta (~L1205, action 'saveRotorColeta') passa a
+    enviar os_id/tarefa_id. Sem os_id (uso avulso via tela de máquina do
+    PCM), ambos vão vazios e o GAS no-opa o autoCompletar — comportamento
+    idêntico ao anterior.
+  - Nenhum ID/data-key/nome de função renomeado. Nenhuma mudança de layout.
+-->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -445,6 +458,8 @@ var _currentClientName  = '';
 var _capturedPhotoBase64 = '';
 var _capturedPhotoMime   = 'image/jpeg';
 var _coletaId = 'ROT-' + Date.now();
+var _osId = '';
+var _tarefaId = '';
 
 // ===== FICHA NORMAL =====
 function buildBoxes(){
@@ -1045,6 +1060,8 @@ function initFromURL(){
   var modelo   = params.get('model')        || params.get('modelo') || '';
   var visitId  = params.get('visit_id')     || '';
   var tech     = params.get('tech')         || '';
+  _osId     = params.get('os_id')     || '';
+  _tarefaId = params.get('tarefa_id') || '';
 
   _coletaId = 'ROT-' + (machId || 'X') + '-' + Date.now();
 
@@ -1217,7 +1234,9 @@ async function salvarColeta(){
     anchors_json:    JSON.stringify(anchorsObj),
     medicoes_json:   JSON.stringify(medicoes),
     img_transform:   JSON.stringify(aeTransform),
-    obs:             document.getElementById('obs').value || ''
+    obs:             document.getElementById('obs').value || '',
+    os_id: _osId,
+    tarefa_id: _tarefaId,
   };
 
   try{
