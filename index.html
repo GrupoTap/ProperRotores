@@ -1,4 +1,36 @@
 <!--
+proper_ficha_rotores_v16.html — 14/08/2026 — AS PONTAS DOS FUSOS VOLTAM A SER
+ALCANÇÁVEIS. Feita EM CIMA da v15. 100% ADITIVA: nenhuma função, id, chave de
+storage, âncora salva ou campo removido; com pan neutro (tx=ty=0) o
+comportamento é o da v15.
+
+RELATO: o estagiário não conseguia arrastar os balões para as posições nas
+pontas dos fusos. Reproduzido e MEDIDO em viewport de 412 px, arrastando o
+pino 1 para a extremidade esquerda do desenho:
+    zoom 100%  → a ponta chega a x = 0,0 %    ✓
+    zoom 200%  → a ponta PARA em x = 23,5 %   ✗
+Não era o arrasto: a 100% ele funciona e o pino chega ao extremo. Era o ZOOM.
+`#ae-palco` escala a partir do CENTRO, `.ae-img-wrap` tem `overflow:hidden` e
+NÃO existia pan — então cada ampliação empurra as bordas do desenho para fora
+da área visível e não havia como trazê-las de volta. Medido: a 150 % já saem
+inteiros da tela os pontos 1, 3, 6 e 9 — que são justamente "Eixo Esq./Dir.",
+as PONTAS DOS FUSOS, em x = 7, 93, 7 e 13 %. Quem ampliava para acertar o
+ponto perdia exatamente o ponto que queria acertar.
+
+CORREÇÃO: pan por arrasto no fundo do palco (arrastar EM CIMA de um pino segue
+movendo o pino — o alvo decide, não há gesto novo), com curso limitado ao que o
+zoom acrescentou, aviso "✋ arraste o desenho" enquanto houver curso, e reset do
+pan quando o zoom volta a ≤ 100 %.
+⚠ Trocar `overflow:hidden` por `auto` NÃO resolveria: com origem no centro,
+  metade do transbordo cai em coordenada negativa, que não é rolável.
+⚠ `aePonteiroParaPercent` passou a montar a matriz de rotate+scale em vez de
+  ler o computed style: com o translate lá dentro, a inversa subtrairia o pan
+  duas vezes e o pino andaria o dobro do dedo.
+⚠ Transform gravado pela v15 não tem tx/ty; `aeLoadTransformLocal` completa com
+  0 — `undefined` na string de transform mataria o atributo inteiro, e a imagem
+  abriria sem zoom nem rotação, sem nada no console.
+
+────────────────────────────────────────────────────────────────────────────
 proper_ficha_rotores_v15.html — 13/08/2026 (b) — OS BALÕES VOLTAM A POSICIONAR.
 v15 — 100% ADITIVA: nenhuma função, id, chave de storage, âncora salva ou campo
 do objeto renomeado ou removido. `PONTOS[n].anchor` continua no mesmo formato.
@@ -106,7 +138,7 @@ v13 — Rotores agora honra os_id/tarefa_id vindos do PCF, fechando o elo com
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proper - Ficha de Rotores · v15</title>
+<title>Proper - Ficha de Rotores · v16</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#C0392B;--dark:#1a1a1a;--gray:#4a4a4a;--light:#f5f5f5;--border:#bdbdbd}
@@ -213,7 +245,35 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#1a1a1a;color:var(--dark
 .ae-img-wrap{
   position:relative;display:inline-flex;align-items:center;justify-content:center;
   cursor:crosshair;background:#222;border-radius:8px;overflow:hidden;
+  /* v16 — o arrasto de PAN é do dedo, não do navegador. Sem isto o gesto vira
+     rolagem da página no celular e o palco não anda. Os pinos já têm
+     touch-action:none próprio, então continuam ganhando o toque deles. */
+  touch-action:none;
 }
+/* ══════════════════════════════════════════════════════════════════════════
+   v16 — POR QUE EXISTE PAN (medido, não suposto).
+   O zoom escala o #ae-palco a partir do CENTRO e este wrap tem overflow:hidden
+   — e não havia como mover o palco. Medido em 412 px (celular do técnico),
+   arrastando o pino 1 para a extremidade esquerda:
+       zoom 100%  → a ponta chega a x=0,0 %   ✓
+       zoom 200%  → a ponta PARA em x=23,5 %  ✗  (o dedo bate na borda da tela)
+   Os pontos 1, 3, 6 e 9 — "Eixo Esq./Dir.", as PONTAS DOS FUSOS — moram em
+   x=7, 93, 7 e 13 %. A 150 % ou mais eles saem inteiros da área visível.
+   Ou seja: quem ampliava para acertar o ponto perdia exatamente o ponto que
+   queria acertar. Era isto que o estagiário relatava como "não consigo
+   arrastar os balões para as pontas dos fusos".
+   ⚠ Não dava para resolver só trocando overflow:hidden por auto: a origem do
+     zoom é o CENTRO, então metade do transbordo cai em coordenada negativa, e
+     área negativa não é rolável. Ou se mudava a origem para 0 0 (o que quebra
+     a rotação e a conta de ponteiro), ou se ganhava pan de verdade. É o pan.
+   ══════════════════════════════════════════════════════════════════════════ */
+.ae-img-wrap.panning{cursor:grabbing}
+#ae-pan-aviso{
+  position:absolute;left:50%;bottom:8px;transform:translateX(-50%);
+  background:rgba(0,0,0,.72);color:#FFD700;font-size:10px;font-weight:700;
+  padding:3px 9px;border-radius:10px;pointer-events:none;z-index:70;
+  white-space:nowrap;opacity:0;transition:opacity .2s}
+#ae-pan-aviso.on{opacity:1}
 #ae-palco{
   position:relative;display:inline-block;line-height:0;
   transform-origin:center center;
@@ -1081,7 +1141,21 @@ function renderEditor(){
     palco.appendChild(dot);
     makeDraggable(dot, n);
   });
-  aeAplicarContraTransform();
+  _aePanLigar();   // v16 — pan do palco; idempotente (guard por dataset)
+  // ══════════════════════════════════════════════════════════════════════
+  // v16 — O ZOOM GRAVADO NÃO ERA APLICADO AO ABRIR (defeito da v15, medido).
+  // `aeLoadTransformLocal()` restaura aeTransform no load, mas o editor só
+  // chamava `aeAplicarContraTransform()` — que mexe nos PINOS, não no palco.
+  // Resultado medido com {scale:1.5} gravado: `transform` do palco = `none`,
+  // mostrador dizendo "100%", e aeTransform.scale = 1.5. O próximo toque em
+  // ＋ saltava de 100 % visual para 160 %.
+  // Trocar por `aeApplyTransform()` faz as três coisas concordarem (ele já
+  // chama a contra-transformação por dentro, atualiza o mostrador e agora
+  // também limita o pan).
+  // ⚠ Só ficou seguro AGORA: até a v15, reabrir já ampliado significava
+  //   reabrir com as pontas dos fusos fora da tela e sem como trazê-las.
+  // ══════════════════════════════════════════════════════════════════════
+  aeApplyTransform();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1105,7 +1179,12 @@ function aePonteiroParaPercent(clientX, clientY){
   var w=palco.offsetWidth, h=palco.offsetHeight;     // caixa de LAYOUT
   if(!w||!h) return {x:0,y:0};
   try{
-    var m=new DOMMatrix(getComputedStyle(palco).transform);
+    // ⚠ v16 — a matriz é montada de rotate+scale, NÃO lida do computed style.
+    //   Desde que existe pan, o computed style traz o translate junto; e como
+    //   `cx/cy` saem do rect JÁ transladado, aplicar a inversa completa
+    //   subtrairia o pan DUAS vezes e o pino andaria o dobro do dedo. Rotação e
+    //   escala são as únicas partes que dependem da origem central.
+    var m=new DOMMatrix().rotate(aeTransform.rotate||0).scale(aeTransform.scale||1);
     // transform-origin é o centro, e o centro é invariante a rotate/scale
     var cx=r.left+r.width/2, cy=r.top+r.height/2;
     var p=m.inverse().transformPoint(new DOMPoint(clientX-cx, clientY-cy));
@@ -1535,8 +1614,35 @@ function onImageInput(input){
 function onCameraCapture(input){ onImageInput(input); }
 
 // ===== TRANSFORM DA IMAGEM =====
-var aeTransform = { scale: 1, rotate: 0 };
+// v16 — tx/ty em PIXELS DE TELA, aplicados ANTES de rotate/scale na string de
+// transform. Zero por padrão ⇒ com pan neutro o resultado é byte a byte o
+// comportamento da v15.
+var aeTransform = { scale: 1, rotate: 0, tx: 0, ty: 0 };
 var AE_TRANSFORM_KEY = 'propercare_img_transform';
+
+// ══════════════════════════════════════════════════════════════════════════
+// v16 — LIMITE DO PAN: nunca deixar o desenho sair inteiro da janela, e nunca
+// impedir que QUALQUER ponto dele seja alcançado.
+// O curso necessário em cada eixo é metade do que o zoom acrescentou — é
+// exatamente o que falta para a borda do palco encostar na borda do wrap.
+// Com scale ≤ 1 o curso é 0 e o pan fica inerte (nada a alcançar).
+// ⚠ Usa o rect JÁ TRANSFORMADO do palco, então vale também com rotação: o
+//   palco girado tem outra largura visual e o curso acompanha sozinho.
+// ══════════════════════════════════════════════════════════════════════════
+function _aePanLimite(){
+  var palco=document.getElementById('ae-palco'), wrap=document.getElementById('ae-img-wrap');
+  if(!palco||!wrap) return {x:0,y:0};
+  var p=palco.getBoundingClientRect(), w=wrap.getBoundingClientRect();
+  return { x: Math.max(0, (p.width  - w.width )/2),
+           y: Math.max(0, (p.height - w.height)/2) };
+}
+function _aeClampPan(){
+  var lim=_aePanLimite();
+  // o limite é medido COM o tx atual dentro; por isso mede-se o curso a partir
+  // do tamanho, não da posição — tamanho não depende de tx.
+  aeTransform.tx = Math.min(lim.x, Math.max(-lim.x, aeTransform.tx||0));
+  aeTransform.ty = Math.min(lim.y, Math.max(-lim.y, aeTransform.ty||0));
+}
 
 function aeApplyTransform(){
   // 13/08 (b) — o alvo passou a ser o PALCO (imagem + pinos juntos). Aplicar só
@@ -1544,7 +1650,13 @@ function aeApplyTransform(){
   var palco = document.getElementById('ae-palco');
   var img = palco || document.getElementById('ae-img');
   if(!img) return;
-  img.style.transform = 'rotate('+aeTransform.rotate+'deg) scale('+aeTransform.scale+')';
+  if(!aeTransform.scale || aeTransform.scale<=1){ aeTransform.tx=0; aeTransform.ty=0; }
+  img.style.transform = 'translate('+(aeTransform.tx||0)+'px,'+(aeTransform.ty||0)+'px) '
+                      + 'rotate('+aeTransform.rotate+'deg) scale('+aeTransform.scale+')';
+  _aeClampPan();
+  img.style.transform = 'translate('+(aeTransform.tx||0)+'px,'+(aeTransform.ty||0)+'px) '
+                      + 'rotate('+aeTransform.rotate+'deg) scale('+aeTransform.scale+')';
+  _aePanAviso();
   try{ aeAplicarContraTransform(); }catch(e){}
   var d = document.getElementById('ae-transform-display');
   if(d){
@@ -1564,8 +1676,101 @@ function aeZoom(delta){
 }
 
 function aeReset(){
-  aeTransform = { scale: 1, rotate: 0 };
+  aeTransform = { scale: 1, rotate: 0, tx: 0, ty: 0 };
   aeApplyTransform();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// v16 — PAN POR ARRASTO NO FUNDO DO PALCO.
+// O pino tem handler próprio de mousedown/touchstart; aqui o guard é o
+// `closest('.ae-dot')`, então arrastar EM CIMA de um pino continua movendo o
+// pino e arrastar no desenho move a vista. Nenhuma gesto novo para aprender:
+// é o mesmo arrasto, o alvo é que decide.
+// ⚠ `_aePanMoveu` existe para o pan não roubar o clique de seleção: sem ele um
+//   toque parado no desenho contaria como arrasto.
+// ⚠ Sem pointer events de propósito — o resto do arquivo é mouse+touch, e
+//   misturar os dois modelos no mesmo elemento cria evento duplicado em
+//   WebView antiga.
+// ══════════════════════════════════════════════════════════════════════════
+var _aePan = null, _aePanMoveu = false;
+
+function _aePanCli(e){
+  return (e.touches && e.touches[0])
+    ? {x:e.touches[0].clientX, y:e.touches[0].clientY}
+    : {x:e.clientX, y:e.clientY};
+}
+
+function _aePanAviso(){
+  var el=document.getElementById('ae-pan-aviso');
+  if(!el) return;
+  var lim=_aePanLimite();
+  var podePan = (lim.x>1 || lim.y>1);
+  el.textContent='✋ arraste o desenho para alcançar as pontas';
+  el.classList.toggle('on', podePan && !_aePan);
+}
+
+function _aePanDown(e){
+  if(e.target && e.target.closest && e.target.closest('.ae-dot')) return; // é pino
+  var lim=_aePanLimite();
+  if(lim.x<=1 && lim.y<=1) return;                    // nada a arrastar
+  var c=_aePanCli(e);
+  _aePan={ x:c.x, y:c.y, tx:aeTransform.tx||0, ty:aeTransform.ty||0 };
+  _aePanMoveu=false;
+  var wrap=document.getElementById('ae-img-wrap');
+  if(wrap) wrap.classList.add('panning');
+  var palco=document.getElementById('ae-palco');
+  if(palco) palco.style.transition='none';            // pan tem de colar no dedo
+}
+
+function _aePanMove(e){
+  if(!_aePan) return;
+  e.preventDefault();
+  var c=_aePanCli(e);
+  var ddx=c.x-_aePan.x, ddy=c.y-_aePan.y;
+  if(Math.abs(ddx)>3 || Math.abs(ddy)>3) _aePanMoveu=true;
+  aeTransform.tx=_aePan.tx+ddx;
+  aeTransform.ty=_aePan.ty+ddy;
+  aeApplyTransform();
+}
+
+function _aePanUp(){
+  if(!_aePan) return;
+  _aePan=null;
+  var wrap=document.getElementById('ae-img-wrap');
+  if(wrap) wrap.classList.remove('panning');
+  var palco=document.getElementById('ae-palco');
+  if(palco) palco.style.transition='';
+  _aePanAviso();
+}
+
+function _aePanLigar(){
+  var wrap=document.getElementById('ae-img-wrap');
+  if(!wrap || wrap.dataset.panLigado==='1') return;
+  wrap.dataset.panLigado='1';
+  if(!document.getElementById('ae-pan-aviso')){
+    var a=document.createElement('div'); a.id='ae-pan-aviso'; wrap.appendChild(a);
+  }
+  wrap.addEventListener('mousedown',function(e){
+    _aePanDown(e);
+    if(!_aePan) return;
+    document.addEventListener('mousemove',_aePanMove);
+    document.addEventListener('mouseup',_aePanFim);
+  });
+  wrap.addEventListener('touchstart',function(e){
+    _aePanDown(e);
+    if(!_aePan) return;
+    document.addEventListener('touchmove',_aePanMove,{passive:false});
+    document.addEventListener('touchend',_aePanFim);
+    document.addEventListener('touchcancel',_aePanFim);
+  },{passive:false});
+}
+function _aePanFim(){
+  _aePanUp();
+  document.removeEventListener('mousemove',_aePanMove);
+  document.removeEventListener('mouseup',_aePanFim);
+  document.removeEventListener('touchmove',_aePanMove);
+  document.removeEventListener('touchend',_aePanFim);
+  document.removeEventListener('touchcancel',_aePanFim);
 }
 
 function aeSaveTransformLocal(){
@@ -1577,7 +1782,13 @@ function aeLoadTransformLocal(){
     var raw = localStorage.getItem(AE_TRANSFORM_KEY);
     if(raw){
       var t = JSON.parse(raw);
-      if(typeof t.scale === 'number' && typeof t.rotate === 'number') aeTransform = t;
+      if(typeof t.scale === 'number' && typeof t.rotate === 'number'){
+        // v16 — tx/ty com default: um transform gravado pela v15 não tem os
+        // campos novos, e `undefined` na string de transform mataria o
+        // atributo inteiro (imagem sem zoom nem rotação, sem erro no console).
+        aeTransform = { scale:t.scale, rotate:t.rotate,
+                        tx:(typeof t.tx==='number'?t.tx:0), ty:(typeof t.ty==='number'?t.ty:0) };
+      }
     }
   }catch(e){}
 }
