@@ -1,4 +1,14 @@
 <!--
+proper_ficha_rotores_v24.html — 31/10/2026 — CÓDIGO DA FICHA QUE CABE (rodada 2026-10-31_FERNANDO_rotores_v24_codigo_da_ficha).
+  · O código da ficha (coleta_id) era 'ROT-' + ID da máquina + '-' + hora. O ID da máquina embute cliente+marca+modelo+série e passa
+    de 62 caracteres em 8 máquinas do cadastro (ex.: PGP-2026-0080, Authentic Moveis Chicago Pneumatic CPB25 = 66) ⇒ código com 84 e o
+    servidor (GAS v179 e SQL _rf_id_ok: só letras, números e _ . : -, até 80) recusava TODO envio: "coleta_id inválido".
+  · rf24ColetaId: máquina com ID curto e limpo ⇒ o MESMO código de antes; ID longo ou com caractere fora da lista ⇒ começo do ID +
+    '-' + resumo de 8 hex (FNV-1a do ID inteiro) — sempre ≤ 80. Nada no servidor lê a máquina de dentro do código (vai em machine_id).
+  · Ficha presa no aparelho: ao abrir, o código inválido é trocado (rf24ConsertarId, determinístico: mesma hora do código antigo) e os
+    envios desta ficha que estão na fila (pendentes ou mortos sem recusa) ganham o código novo; o rascunho é reenviado sozinho.
+    O servidor nunca aceitou o código antigo (as duas pontas recusam) ⇒ trocar não deixa nada órfão no banco.
+  · payloadColeta confere o código antes de todo envio (rede de segurança).
 proper_ficha_rotores_v23.html — 27/10/2026 — FILA, N/A, NUMERAÇÃO EM SEQUÊNCIA E ARRASTO (rodada 2026-10-27_FERNANDO_rotores_v23_fila_na_numeracao).
   · FILA: o envio da ficha (job rotorColeta/rotorRascunho) passa a levar a action DENTRO do corpo. O PCF e o sw.js do PCF drenam esta
     fila (mesmo banco properSafe) e mandavam o corpo sem action ⇒ GAS "Ação desconhecida: undefined" ⇒ a tarefa nunca fechava
@@ -39,14 +49,14 @@ O QUE MUDA PARA QUEM USA
 COMPATIBILIDADE: coletas v1 (v20) seguem legíveis no PCM; este arquivo NUNCA chama as actions do catálogo legado de modelos (aba ROTORES_MODELOS fica só-leitura legada).
 Contrato dos dados: ENTREGAS\2026-10-22_FERNANDO_ficha_rotores_v2\_testes\CONTRATO.md (§1 schema da ficha, §3 GAS v179).
 Cada PONTO P1..P11 = posição no ANEXO_desenho_rotores.png (v22: macho = rotor de baixo, P5, P7–P11 · fêmea = de cima, P1–P4, P6).
-Carimbo para o gerar_versoes.py: proper_ficha_rotores_v23 · Proper - Ficha de Rotores · v23
+Carimbo para o gerar_versoes.py: proper_ficha_rotores_v24 · Proper - Ficha de Rotores · v24
 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proper - Ficha de Rotores · v23</title>
+<title>Proper - Ficha de Rotores · v24</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#C0392B;--dark:#1a1a1a;--gray:#4a4a4a;--light:#f5f5f5;--border:#bdbdbd;--ok:#2e7d32;--amb:#e08a00}
@@ -632,7 +642,7 @@ function rfChamadaPadrao(n,g){ var c=RF_CHAMADA[n], f=Math.max(0,Math.min(1,c[1]
 function rfAnchorsPadrao(an){ if(!Array.isArray(an)||!an.length) return true; for(var j=1;j<=11;j++){ var a=an.filter(function(q){return q&&q.n===j;})[0]; if(a && (Math.abs(a.x-RF_ANCORAS[j][0])>0.01 || Math.abs(a.y-RF_ANCORAS[j][1])>0.01)) return false; } return true; }
 function rfAnchorsValidas(an){ if(!Array.isArray(an)||an.length!==11) return false; for(var j=1;j<=11;j++){ var a=an.filter(function(q){return q&&q.n===j;})[0]; if(!a||typeof a.x!=='number'||typeof a.y!=='number'||!isFinite(a.x)||!isFinite(a.y)||a.x<0||a.x>100||a.y<0||a.y>100) return false; } return true; }
 
-var RF = window.RF = { cfg: { debounce: 400, srvMin: 2500, srvMax: 60000 }, version: 'v23' };
+var RF = window.RF = { cfg: { debounce: 400, srvMin: 2500, srvMax: 60000 }, version: 'v24' };
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function parseNum(s, dec){
@@ -687,8 +697,62 @@ function blankFicha(){
     folgas:{ axial_macho:null, axial_femea:null, radial_macho:null, radial_femea:null },
     anchors:an, desenho:'padrao', foto_url:'', obs:'', numeracao:2 };
 }
+// v24: o código da ficha cabe SEMPRE na regra do servidor (GAS V179_ID_OK = SQL _rf_id_ok). Mudar aqui = conferir lá.
+var RF24_ID_OK = /^[A-Za-z0-9_.:-]{1,80}$/;
+function rf24Hash(t){ var h=0x811c9dc5; t=String(t); for(var i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,0x01000193)>>>0; } return ('0000000'+h.toString(16)).slice(-8); }
+function rf24ColetaId(mid, ts){
+  var t=String(ts==null||ts===''?Date.now():ts).replace(/[^A-Za-z0-9]/g,'').slice(0,20)||String(Date.now());
+  var bruto=String(mid==null?'':mid).trim(), m=bruto.replace(/[^A-Za-z0-9_.:-]/g,'');
+  var cabe=80-('ROT-'.length+1+t.length);
+  if(!bruto) m='X';
+  else if(m!==bruto || m.length>cabe) m=m.slice(0, Math.max(1, cabe-9)).replace(/-+$/,'')+'-'+rf24Hash(bruto);   /* curto e limpo = igual ao v23 */
+  return 'ROT-'+m+'-'+t;
+}
+// código já gravado no aparelho: válido fica; inválido vira o código v24 da MESMA máquina e da MESMA hora (determinístico: rascunho e fila concordam)
+function rf24ConsertarId(cid, mid){
+  cid=String(cid==null?'':cid).trim();
+  if(RF24_ID_OK.test(cid)) return cid;
+  var mm=/^ROT-([\s\S]*)-(\d{10,})$/.exec(cid);
+  if(mm) return rf24ColetaId(mm[1], mm[2]);
+  return rf24ColetaId(mid, cid?('h'+rf24Hash(cid)):'');
+}
+function rf24Garantir(){
+  if(!S) return false; var de=String(S.coleta_id||''), para=rf24ConsertarId(de, S.inst&&S.inst.machine_id);
+  if(para===de) return false;
+  S.coleta_id=para; S.srvHash=''; S.rf24Trocou={ de:de, para:para }; return true;
+}
+// fila desta ficha: envios gravados com o código antigo ganham o novo e voltam (recusa de verdade não volta; lease vivo fica para depois)
+async function rf24CurarFila(draftId){
+  var n=0;
+  try{
+    var js=await PS.listJobs();
+    for(var i=0;i<js.length;i++){ var j=js[i];
+      if(!j || j.draftId!==draftId || !j.body || j.recusado) continue;
+      if(j.status!=='pending' && j.status!=='dead') continue;
+      if(j.lease_ate && j.lease_ate>Date.now()) continue;
+      var mid=j.body.machine_id||j.body.maquina_id||(S&&S.inst&&S.inst.machine_id), mudou=false;
+      var de=String(j.body.coleta_id==null?'':j.body.coleta_id);
+      if(de && !RF24_ID_OK.test(de)){ j.body.coleta_id=rf24ConsertarId(de, mid); mudou=true; }
+      var u=String(j.body.pdf_uid==null?'':j.body.pdf_uid);   /* o PDF não leva coleta_id no corpo: só o pdf_uid (auditoria M2) */
+      if(/^pdf_/.test(u) && !RF24_ID_OK.test(u.slice(4))){ j.body.pdf_uid='pdf_'+rf24ConsertarId(u.slice(4), mid); mudou=true; }
+      if(!mudou) continue;
+      await PS.enqueue(j); n++;
+    }
+  }catch(e){}
+  RF.rf24Curados=n; return n;
+}
+// outras fichas DESTE aparelho com o código antigo (rascunho ou envio): só avisa — cada uma se conserta ao ser aberta (mesma regra A2 da v23)
+async function rf24AvisarOutras(draftId){
+  var ids={};
+  try{ var ds=await PS.listDrafts(); ds.forEach(function(d){ if(d && d.draftId && d.draftId!==draftId && d.coleta_id && !RF24_ID_OK.test(String(d.coleta_id))) ids[d.draftId]=1; }); }catch(e){}
+  try{ var js=await PS.listJobs(); js.forEach(function(j){ if(j && j.draftId && j.draftId!==draftId && j.body && j.body.coleta_id && !RF24_ID_OK.test(String(j.body.coleta_id)) && (j.status==='pending'||j.status==='dead')) ids[j.draftId]=1; }); }catch(e){}
+  var n=Object.keys(ids).length; RF.rf24Outras=n; if(!n) return 0;
+  var el=$('bn-aviso-msg'), antes=(RF.presosOutros&&el)?el.innerHTML+'<br>':'';
+  rfBanner('bn-aviso','bn-aviso-msg', antes+'⚠ Este aparelho tem <b>'+n+'</b> ficha(s) de rotores de OUTRA(S) tarefa(s) com o código antigo (recusado pelo servidor). Abra cada uma pela tarefa da OS, com internet: ela se corrige e é reenviada.');
+  return n;
+}
 function novoEstado(inst){
-  return { loaded:false, inst:inst, draftId:'', coleta_id:'ROT-'+(inst.machine_id||'X')+'-'+Date.now(), status:'draft',
+  return { loaded:false, inst:inst, draftId:'', coleta_id:rf24ColetaId(inst.machine_id), status:'draft',
     cab:{ modelo_unidade:'', modelo_compressor:'', cliente:inst.cliente||'', local:'', os_numero:inst.os_numero||'', serie:'', tag:'', data:hoje(), tecnico:sessTecnico() },
     ficha:blankFicha(), nominal:null, base:null, prefill:{bucha:false,selo:false}, fotoBaseId:null, machine:null, correcao_de:'',
     rev:0, tn:0, srvTn:0, srvAt:0, srvHash:'', closedPending:false, unsent:false, mt:0, pdf:{}, uidAvulsa:'' };
@@ -1147,7 +1211,9 @@ async function prepararColeta(job, body){
     if(baseUrl) m.foto_url=baseUrl;
     body.medicoes_json=JSON.stringify(m);
     var js=await PS.jobsOf(job.draftId);
-    var pj=js.filter(function(x){ return x.kind==='salvarPdfDrive'&&x.status==='done'&&x.result&&x.result.url; })[0];
+    var pjs=js.filter(function(x){ return x.kind==='salvarPdfDrive'&&x.status==='done'&&x.result&&x.result.url; });   /* v24 (M1): o PDF DESTA versão do código; senão o mais novo */
+    pjs.sort(function(a,b){ return (b.jobId||0)-(a.jobId||0); });
+    var pj=pjs.filter(function(x){ return x.body&&x.body.pdf_uid==='pdf_'+body.coleta_id; })[0] || pjs[0];
     if(pj) body.pdf_url=pj.result.url;
   }catch(e){}
 }
@@ -1242,6 +1308,7 @@ function payloadColeta(status){
     cabecalho:{ modelo_unidade:String(S.cab.modelo_unidade||'').trim(), modelo_compressor:S.cab.modelo_compressor||'' },
     nominal_ref: b?{ modelo_ficha_id:b.modelo_ficha_id||null, sub_lib_id:b.sub_lib_id||null, versao:b.versao||null, atualizado_em:b.atualizado_em||null }:{ modelo_ficha_id:null, atualizado_em:null }
   });
+  rf24Garantir();   /* v24: nunca sai código que o servidor recusa */
   var p={ action:'saveRotorColeta',   /* v23: action NO CORPO — o PCF e o sw.js também enviam esta fila e não sabem o kind */
     coleta_id:S.coleta_id, machine_id:S.inst.machine_id||'', visit_id:'', cliente:S.cab.cliente||'',
     marca:m.brand||'', modelo:m.model||'', serie:S.cab.serie||m.serial||'', tag:S.cab.tag||m.tag||'',
@@ -1367,6 +1434,7 @@ function aplicarDraft(d){
   S.nominal=d.nominal||null; S.base=d.base||null; S.prefill=d.prefill||{bucha:false,selo:false}; S.fotoBaseId=(d.fotoBaseId==null?null:d.fotoBaseId);
   if(d.machine && !S.machine) S.machine=d.machine; if(d.inst && d.inst.machine_id && !S.inst.machine_id) S.inst.machine_id=d.inst.machine_id;
   S.correcao_de=d.correcao_de||''; S.srvHash=d.srvHash||''; S.rev=d.rev||0; S.pdf=d.pdf||{}; S.mt=d.mt||0; S.localAt=d.mt||0;
+  rf24Garantir();   /* v24: código antigo > 80 / caractere fora da lista */
 }
 async function iniciarInstancia(inst, maquina, aviso){
   S=novoEstado(inst); S.machine=maquina||null; S.draftId=draftIdOf(inst); S.photoCache={};
@@ -1397,6 +1465,14 @@ async function iniciarInstancia(inst, maquina, aviso){
     }
   }
   await rf23CurarFila(S.draftId);   /* v23 (A2): só esta ficha */
+  await rf24CurarFila(S.draftId);   /* v24: envios desta ficha com o código antigo */
+  if(S.rf24Trocou){
+    rfEsconder('bn-recusa'); await saveLocal();
+    var rf24Vai=RF.rf24Curados>0;
+    if(S.status==='draft' && temConteudo()){ rf24Vai=true; try{ await srvFlush(true); }catch(e){} }
+    toast(rf24Vai?'Código da ficha ajustado — reenviando ao servidor.':'Código da ficha ajustado.');
+  }
+  await rf24AvisarOutras(S.draftId);
   if(RF.presosOutros) rfBanner('bn-aviso','bn-aviso-msg','⚠ Este aparelho tem <b>'+RF.presosOutros+'</b> ficha(s) de rotores de OUTRA(S) tarefa(s) presa(s) desde antes da v23. Abra cada uma pela tarefa da OS, com internet, para ela ser reenviada.');
   carregarBase();
   if(S.status==='draft') PS.pump();
@@ -1535,7 +1611,7 @@ async function enfileirarPdf(){
     var doc=await construirPdf('proper'); var b64=doc.output('datauristring').split(',')[1];
     var body={ action:'salvarPdfDrive', os_id:S.inst.os_id, os_numero:S.cab.os_numero||'', cliente:S.cab.cliente||'SemCliente', maquina_id:S.inst.machine_id||'',
       maquina_label:[(S.machine||{}).brand,(S.machine||{}).model,S.cab.tag||S.cab.serie].filter(Boolean).join(' '), base64:b64,
-      fileName:nomeArq(S.correcao_de?'_corrigida':''), categoria:'pdf_rotores', caption:'Ficha de rotores', createdBy:S.cab.tecnico||'', pdf_uid:'pdf_'+S.coleta_id };
+      fileName:nomeArq(S.correcao_de?'_corrigida':''), categoria:'pdf_rotores', caption:'Ficha de rotores', createdBy:S.cab.tecnico||'', pdf_uid:'pdf_'+(rf24Garantir(), S.coleta_id) };
     await PS.enqueue({ draftId:S.draftId, kind:'salvarPdfDrive', url:GAS_URL, body:body, label:'PDF da ficha' });
     S.pdf.pendente=false; S.pdf.motivo=''; S.pdf.gerado=true; return true;
   }catch(e){ S.pdf.pendente=true; S.pdf.motivo=String((e&&e.message)||e||'falha'); S.pdf.gerado=false; return false; }
@@ -1543,7 +1619,7 @@ async function enfileirarPdf(){
 async function concluirCore(){
   opOn('Concluindo a ficha…');
   try{
-    clearTimeout(_dbT); await saveLocal();
+    clearTimeout(_dbT); rf24Garantir(); await saveLocal();
     // fotos primeiro, PDF depois, dados por último (fila FIFO: a tarefa só fecha depois do laudo)
     var ph=[]; try{ ph=await PS.photosOf(S.draftId); }catch(e){}
     for(var i=0;i<ph.length;i++){ var p=ph[i]; if(p.uploadStatus==='ok') continue;
@@ -1595,7 +1671,7 @@ async function rfIniciarCorrecao(){
   if(!base){ toast('Não há ficha anterior neste aparelho. Preencha de novo.'); rfEsconder('bn-corr'); return; }
   var anterior=base.coleta_id;
   S.cab=Object.assign(S.cab, clone(base.cab)); S.ficha=Object.assign(blankFicha(), clone(base.ficha)); rf23Numeracao(S.ficha, base.ficha); S.nominal=base.nominal?clone(base.nominal):S.nominal; S.base=base.base?clone(base.base):S.base;
-  S.coleta_id='ROT-'+(S.inst.machine_id||'X')+'-'+Date.now(); S.correcao_de=anterior||''; S.status='draft'; S.finalizado=false; S._fin=false; S.pdf={}; S.srvHash=''; S.srvOkAt=0; S.srvTn=0; S.rev=0; S.assumir=false; S.localAt=Date.now();
+  S.coleta_id=rf24ColetaId(S.inst.machine_id); S.correcao_de=anterior||''; S.status='draft'; S.finalizado=false; S._fin=false; S.pdf={}; S.srvHash=''; S.srvOkAt=0; S.srvTn=0; S.rev=0; S.assumir=false; S.localAt=Date.now();
   $('rf-final').style.display='none'; $('rf-main').style.display=''; rfEsconder('bn-corr');
   renderTudo(); renderBase(); touch(true); await saveLocal();
   toast('Corrigindo a ficha — ao concluir, ela substitui a anterior.');
